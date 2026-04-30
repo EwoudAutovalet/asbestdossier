@@ -21,6 +21,7 @@ import {
   Loader2,
   UserPlus,
   RefreshCw,
+  ClipboardCheck,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -47,16 +48,18 @@ import type {
   Attachment,
   Removal,
   TimelineEvent,
+  InspectionChecklist,
+  ChecklistItem,
   PropertyStatus,
   JobStatus,
 } from "@/lib/types";
-import { PROPERTY_STATUS_LABELS, JOB_STATUS_LABELS } from "@/lib/types";
+import { PROPERTY_STATUS_LABELS, JOB_STATUS_LABELS, RISK_LEVEL_LABELS, CONDITION_LABELS, PRIORITY_LABELS } from "@/lib/types";
 
 interface PropertyDetailProps {
   profile: Profile;
   property: Property;
   owner: Profile | null;
-  jobs: (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[] })[];
+  jobs: (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[] })[];
   timeline: (TimelineEvent & { actor: Profile })[];
   specialists: Profile[];
 }
@@ -128,6 +131,7 @@ export function PropertyDetail({
   const sitePhotos = allAttachments.filter((a) => a.type === "site_photo");
   const paperScans = allAttachments.filter((a) => a.type === "paper_scan");
   const allRemovals = jobs.flatMap((j) => j.removals || []);
+  const allChecklists = jobs.flatMap((j) => j.checklists || []);
   const progress = propertyProgress(property.status);
 
   async function handleCreateJob(e: React.FormEvent) {
@@ -418,6 +422,10 @@ export function PropertyDetail({
                 <Package className="w-4 h-4 mr-2" />
                 Verwijderingen ({allRemovals.length})
               </TabsTrigger>
+              <TabsTrigger value="inspections">
+                <ClipboardCheck className="w-4 h-4 mr-2" />
+                Inspecties ({allChecklists.length})
+              </TabsTrigger>
               <TabsTrigger value="jobs">
                 <FileText className="w-4 h-4 mr-2" />
                 Opdrachten ({jobs.length})
@@ -609,6 +617,96 @@ export function PropertyDetail({
                         </div>
                       </div>
                     </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            {/* INSPECTIONS */}
+            <TabsContent value="inspections">
+              {allChecklists.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  <ClipboardCheck className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                  Nog geen inspecties uitgevoerd voor dit pand.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {allChecklists.map((cl) => (
+                    <Card key={cl.id} className="border">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-sm font-bold">
+                            Inspectie — {new Date(cl.inspected_at).toLocaleDateString("nl-BE", {
+                              day: "numeric", month: "long", year: "numeric",
+                            })}
+                          </CardTitle>
+                          <div className="flex gap-2">
+                            {cl.risk_level && (
+                              <Badge
+                                variant={
+                                  cl.risk_level === "laag" ? "success" :
+                                  cl.risk_level === "gemiddeld" ? "warning" : "destructive"
+                                }
+                                className="text-[10px]"
+                              >
+                                Risico: {RISK_LEVEL_LABELS[cl.risk_level]}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        {cl.general_condition && (
+                          <p className="text-sm text-muted-foreground mb-2">{cl.general_condition}</p>
+                        )}
+                        {cl.notes && (
+                          <p className="text-xs text-muted-foreground mb-3 bg-muted/50 p-2 rounded">{cl.notes}</p>
+                        )}
+                        <div className="space-y-2">
+                          {cl.items.map((item) => (
+                            <div key={item.id} className="flex items-start gap-3 p-2.5 rounded border bg-muted/20">
+                              {item.photo_url && (
+                                <img
+                                  src={item.photo_url}
+                                  alt={item.item_name}
+                                  className="w-12 h-12 object-cover rounded cursor-pointer shrink-0"
+                                  onClick={() => window.open(item.photo_url!, "_blank")}
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Badge variant="secondary" className="text-[10px]">{item.category}</Badge>
+                                  <span className="text-sm font-medium">{item.item_name}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 mt-1">
+                                  {item.contains_asbestos !== null && (
+                                    <Badge variant={item.contains_asbestos ? "destructive" : "success"} className="text-[10px]">
+                                      {item.contains_asbestos ? "Asbest" : "Geen asbest"}
+                                    </Badge>
+                                  )}
+                                  {item.condition && (
+                                    <Badge variant="secondary" className="text-[10px]">
+                                      {CONDITION_LABELS[item.condition]}
+                                    </Badge>
+                                  )}
+                                  {item.priority && item.priority !== "geen_actie" && (
+                                    <Badge
+                                      variant={item.priority === "urgent" ? "destructive" : "warning"}
+                                      className="text-[10px]"
+                                    >
+                                      {PRIORITY_LABELS[item.priority]}
+                                    </Badge>
+                                  )}
+                                  {item.material_type && (
+                                    <span className="text-xs text-muted-foreground">{item.material_type}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
                   ))}
                 </div>
               )}

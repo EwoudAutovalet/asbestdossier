@@ -90,6 +90,38 @@ export interface TimelineEvent {
   created_at: string;
 }
 
+export type RiskLevel = "laag" | "gemiddeld" | "hoog" | "kritiek";
+export type ItemCondition = "goed" | "beschadigd" | "ernstig_beschadigd" | "verwijderd";
+export type ItemPriority = "geen_actie" | "monitoring" | "planning" | "urgent";
+
+export interface InspectionChecklist {
+  id: string;
+  job_id: string;
+  specialist_id: string;
+  inspected_at: string;
+  general_condition: string | null;
+  risk_level: RiskLevel | null;
+  notes: string | null;
+  completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChecklistItem {
+  id: string;
+  checklist_id: string;
+  category: string;
+  item_name: string;
+  contains_asbestos: boolean | null;
+  condition: ItemCondition | null;
+  material_type: string | null;
+  location_description: string | null;
+  photo_url: string | null;
+  priority: ItemPriority | null;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -163,3 +195,36 @@ export const ATTACHMENT_TYPE_LABELS: Record<AttachmentType, string> = {
   site_photo: "Sitefoto",
   paper_scan: "Document Scan",
 };
+
+export const RISK_LEVEL_LABELS: Record<RiskLevel, string> = {
+  laag: "Laag",
+  gemiddeld: "Gemiddeld",
+  hoog: "Hoog",
+  kritiek: "Kritiek",
+};
+
+export const CONDITION_LABELS: Record<ItemCondition, string> = {
+  goed: "Goed",
+  beschadigd: "Beschadigd",
+  ernstig_beschadigd: "Ernstig beschadigd",
+  verwijderd: "Verwijderd",
+};
+
+export const PRIORITY_LABELS: Record<ItemPriority, string> = {
+  geen_actie: "Geen actie",
+  monitoring: "Monitoring",
+  planning: "Planning",
+  urgent: "Urgent",
+};
+
+export const INSPECTION_CATEGORIES = [
+  "Dak",
+  "Gevelbekleding",
+  "Leidingen",
+  "Vloeren",
+  "Isolatie",
+  "Schoorsteen",
+  "Kelder",
+  "Technische ruimte",
+  "Overig",
+] as const;

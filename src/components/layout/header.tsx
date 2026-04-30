@@ -2,7 +2,7 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase";
-import { Building2, LayoutDashboard, FolderOpen, Users, LogOut } from "lucide-react";
+import { Building2, LayoutDashboard, FolderOpen, Users, LogOut, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
@@ -28,7 +28,10 @@ export function Header({ profile }: HeaderProps) {
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/dossiers", label: "Dossiers", icon: FolderOpen },
     ...(profile.role === "owner"
-      ? [{ href: "/specialisten", label: "Specialisten", icon: Users }]
+      ? [
+          { href: "/analytics", label: "Analytics", icon: BarChart3 },
+          { href: "/specialisten", label: "Specialisten", icon: Users },
+        ]
       : []),
   ];
 
@@ -73,15 +76,24 @@ export function Header({ profile }: HeaderProps) {
           {profile.role === "owner" ? "Eigenaar" : "Specialist"}
         </span>
         <Separator orientation="vertical" className="h-6" />
-        <Avatar className="h-8 w-8">
-          <AvatarFallback className="text-xs font-bold bg-primary/10 text-primary">
-            {initials}
-          </AvatarFallback>
-        </Avatar>
-        <div className="hidden md:block">
-          <div className="text-sm font-semibold leading-tight">{profile.full_name}</div>
-          <div className="text-xs text-muted-foreground">{profile.email}</div>
-        </div>
+        <button
+          onClick={() => router.push("/profiel")}
+          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+          title="Mijn profiel"
+        >
+          <Avatar className="h-8 w-8">
+            {profile.avatar_url ? (
+              <img src={profile.avatar_url} alt={profile.full_name} className="h-full w-full object-cover" />
+            ) : null}
+            <AvatarFallback className="text-xs font-bold bg-primary/10 text-primary">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+          <div className="hidden md:block text-left">
+            <div className="text-sm font-semibold leading-tight">{profile.full_name}</div>
+            <div className="text-xs text-muted-foreground">{profile.email}</div>
+          </div>
+        </button>
         <Button variant="ghost" size="icon" onClick={handleLogout} title="Uitloggen">
           <LogOut className="w-4 h-4" />
         </Button>

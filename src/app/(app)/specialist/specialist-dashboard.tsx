@@ -12,6 +12,7 @@ import {
   ImageIcon,
   ScanLine,
   Package,
+  ClipboardCheck,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,12 +21,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { SmartUpload } from "@/components/upload/smart-upload";
 import { RemovalTracker } from "@/components/removals/removal-tracker";
-import type { Profile, Job, Property, Attachment, Removal, JobStatus } from "@/lib/types";
+import { InspectionChecklistComponent } from "@/components/inspection/inspection-checklist";
+import type { Profile, Job, Property, Attachment, Removal, InspectionChecklist, ChecklistItem, JobStatus } from "@/lib/types";
 import { JOB_STATUS_LABELS } from "@/lib/types";
 
 interface SpecialistDashboardProps {
   profile: Profile;
-  jobs: (Job & { property: Property; attachments: Attachment[]; removals: Removal[] })[];
+  jobs: (Job & { property: Property; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[] })[];
 }
 
 const statusVariant: Record<JobStatus, "warning" | "info" | "purple" | "success" | "secondary" | "destructive"> = {
@@ -49,6 +51,7 @@ export function SpecialistDashboard({ profile, jobs }: SpecialistDashboardProps)
   const sitePhotos = selectedJob?.attachments.filter((a) => a.type === "site_photo") || [];
   const paperScans = selectedJob?.attachments.filter((a) => a.type === "paper_scan") || [];
   const removals = selectedJob?.removals || [];
+  const checklists = selectedJob?.checklists || [];
 
   return (
     <>
@@ -169,6 +172,10 @@ export function SpecialistDashboard({ profile, jobs }: SpecialistDashboardProps)
                         <Package className="w-4 h-4 mr-2" />
                         Verwijderingen ({removals.length})
                       </TabsTrigger>
+                      <TabsTrigger value="inspection" className="flex-1">
+                        <ClipboardCheck className="w-4 h-4 mr-2" />
+                        Inspectie ({checklists.length})
+                      </TabsTrigger>
                     </TabsList>
                   </CardHeader>
 
@@ -250,6 +257,10 @@ export function SpecialistDashboard({ profile, jobs }: SpecialistDashboardProps)
 
                     <TabsContent value="removals">
                       <RemovalTracker jobId={selectedJob.id} removals={removals} />
+                    </TabsContent>
+
+                    <TabsContent value="inspection">
+                      <InspectionChecklistComponent jobId={selectedJob.id} checklists={checklists} />
                     </TabsContent>
                   </CardContent>
                 </Tabs>
