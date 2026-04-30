@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect, notFound } from "next/navigation";
 import { PropertyDetail } from "./property-detail";
-import type { Profile, Property, Job, Attachment, Removal, TimelineEvent, InspectionChecklist, ChecklistItem } from "@/lib/types";
+import type { Profile, Property, Job, Attachment, Removal, TimelineEvent, InspectionChecklist, ChecklistItem, QuoteWithLines } from "@/lib/types";
 
 export default async function PropertyDetailPage({
   params,
@@ -37,7 +37,7 @@ export default async function PropertyDetailPage({
 
   const { data: jobs } = await supabase
     .from("jobs")
-    .select("*, specialist:profiles(*), attachments(*), removals(*), checklists:inspection_checklists(*, items:checklist_items(*))")
+    .select("*, specialist:profiles(*), attachments(*), removals(*), checklists:inspection_checklists(*, items:checklist_items(*)), quotes(*, lines:quote_lines(*))")
     .eq("property_id", id)
     .order("created_at", { ascending: false });
 
@@ -64,7 +64,7 @@ export default async function PropertyDetailPage({
       profile={profile as Profile}
       property={typedProperty}
       owner={(owner as Profile) || null}
-      jobs={(jobs || []) as (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[] })[]}
+      jobs={(jobs || []) as (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[]; quotes: QuoteWithLines[] })[]}
       timeline={(timeline || []) as (TimelineEvent & { actor: Profile })[]}
       specialists={(specialists || []) as Profile[]}
     />

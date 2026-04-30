@@ -122,6 +122,40 @@ export interface ChecklistItem {
   created_at: string;
 }
 
+export type QuoteStatus = "draft" | "submitted" | "approved" | "rejected";
+
+export interface Quote {
+  id: string;
+  job_id: string;
+  specialist_id: string;
+  status: QuoteStatus;
+  description: string | null;
+  labor_cost: number;
+  material_cost: number;
+  disposal_cost: number;
+  total_cost: number;
+  valid_until: string | null;
+  notes: string | null;
+  submitted_at: string | null;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QuoteLine {
+  id: string;
+  quote_id: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: number;
+  total: number;
+  sort_order: number;
+  created_at: string;
+}
+
+export type QuoteWithLines = Quote & { lines: QuoteLine[] };
+
 export interface Database {
   public: {
     Tables: {
@@ -149,6 +183,16 @@ export interface Database {
         Row: TimelineEvent;
         Insert: Omit<TimelineEvent, "id" | "created_at">;
         Update: Partial<Omit<TimelineEvent, "id" | "created_at">>;
+      };
+      quotes: {
+        Row: Quote;
+        Insert: Omit<Quote, "id" | "total_cost" | "created_at" | "updated_at">;
+        Update: Partial<Omit<Quote, "id" | "total_cost" | "created_at" | "updated_at">>;
+      };
+      quote_lines: {
+        Row: QuoteLine;
+        Insert: Omit<QuoteLine, "id" | "total" | "created_at">;
+        Update: Partial<Omit<QuoteLine, "id" | "total" | "created_at">>;
       };
     };
   };
@@ -194,6 +238,13 @@ export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
 export const ATTACHMENT_TYPE_LABELS: Record<AttachmentType, string> = {
   site_photo: "Sitefoto",
   paper_scan: "Document Scan",
+};
+
+export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
+  draft: "Concept",
+  submitted: "Ingediend",
+  approved: "Goedgekeurd",
+  rejected: "Afgewezen",
 };
 
 export const RISK_LEVEL_LABELS: Record<RiskLevel, string> = {

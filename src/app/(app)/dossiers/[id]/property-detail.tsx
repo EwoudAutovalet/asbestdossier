@@ -22,6 +22,7 @@ import {
   UserPlus,
   RefreshCw,
   ClipboardCheck,
+  FileDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -52,14 +53,18 @@ import type {
   ChecklistItem,
   PropertyStatus,
   JobStatus,
+  QuoteWithLines,
 } from "@/lib/types";
 import { PROPERTY_STATUS_LABELS, JOB_STATUS_LABELS, RISK_LEVEL_LABELS, CONDITION_LABELS, PRIORITY_LABELS } from "@/lib/types";
+import { QuoteForm } from "@/components/quotes/quote-form";
+import { QuoteDetail } from "@/components/quotes/quote-detail";
+import { downloadAsbestReport } from "@/components/pdf/asbestos-report";
 
 interface PropertyDetailProps {
   profile: Profile;
   property: Property;
   owner: Profile | null;
-  jobs: (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[] })[];
+  jobs: (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[]; quotes: QuoteWithLines[] })[];
   timeline: (TimelineEvent & { actor: Profile })[];
   specialists: Profile[];
 }
@@ -337,6 +342,17 @@ export function PropertyDetail({
                 </div>
                 <Progress value={progress} className="h-2" />
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 text-xs"
+                onClick={() =>
+                  downloadAsbestReport({ property, owner, jobs })
+                }
+              >
+                <FileDown className="w-3.5 h-3.5 mr-1.5" />
+                PDF Rapport
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -781,6 +797,27 @@ export function PropertyDetail({
                         {job.total_cost && <span>&euro;{job.total_cost.toLocaleString("nl-BE")}</span>}
                         <span className="font-mono">{formatDate(job.created_at)}</span>
                       </div>
+
+                      {/* Quotes section */}
+                      {profile.role === "specialist" && job.specialist_id === profile.id && (
+                        <div className="mt-3 pt-3 border-t">
+                          <QuoteForm
+                            jobId={job.id}
+                            specialistId={profile.id}
+                            existingQuote={job.quotes.length > 0 ? job.quotes[0] : null}
+                            onSaved={() => router.refresh()}
+                          />
+                        </div>
+                      )}
+                      {profile.role === "owner" && job.quotes.length > 0 && (
+                        <div className="mt-3 pt-3 border-t">
+                          <QuoteDetail
+                            quote={job.quotes[0]}
+                            jobId={job.id}
+                            onResponded={() => router.refresh()}
+                          />
+                        </div>
+                      )}
 
                       {/* Status update controls */}
                       {profile.role === "owner" && getNextStatuses(job.status).length > 0 && (
