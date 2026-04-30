@@ -9,14 +9,17 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, XCircle, Calendar } from "lucide-react";
 import type { QuoteWithLines } from "@/lib/types";
 import { QUOTE_STATUS_LABELS } from "@/lib/types";
+import { notify, addTimelineEvent } from "@/lib/notifications";
 
 interface QuoteDetailProps {
   quote: QuoteWithLines;
   jobId: string;
+  propertyId: string;
+  currentUserId: string;
   onResponded?: () => void;
 }
 
-export function QuoteDetail({ quote, jobId, onResponded }: QuoteDetailProps) {
+export function QuoteDetail({ quote, jobId, propertyId, currentUserId, onResponded }: QuoteDetailProps) {
   const supabase = createClient();
   const [responding, setResponding] = useState(false);
 
@@ -38,6 +41,24 @@ export function QuoteDetail({ quote, jobId, onResponded }: QuoteDetailProps) {
           total_cost: quote.total_cost,
         }).eq("id", jobId);
       }
+
+      await notify({
+        supabase,
+        userId: quote.specialist_id,
+        type: action === "approved" ? "quote_approved" : "quote_rejected",
+        title: action === "approved" ? "Offerte goedgekeurd" : "Offerte afgewezen",
+        body: `Totaal: €${quote.total_cost.toLocaleString("nl-BE", { minimumFractionDigits: 2 })}`,
+        metadata: { job_id: jobId, quote_id: quote.id },
+      });
+
+      await addTimelineEvent({
+        supabase,
+        propertyId,
+        jobId,
+        actorId: currentUserId,
+        action: action === "approved" ? "Offerte goedgekeurd" : "Offerte afgewezen",
+        details: { total: quote.total_cost, status: action },
+      });
 
       toast({
         title: action === "approved" ? "Offerte goedgekeurd" : "Offerte afgewezen",

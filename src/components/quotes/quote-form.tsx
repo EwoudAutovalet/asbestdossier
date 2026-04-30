@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Save, Send } from "lucide-react";
 import type { QuoteWithLines } from "@/lib/types";
 import { QUOTE_STATUS_LABELS } from "@/lib/types";
+import { notify, addTimelineEvent } from "@/lib/notifications";
 
 interface QuoteLine {
   id?: string;
@@ -23,6 +24,7 @@ interface QuoteLine {
 
 interface QuoteFormProps {
   jobId: string;
+  propertyId: string;
   specialistId: string;
   existingQuote?: QuoteWithLines | null;
   onSaved?: () => void;
@@ -30,7 +32,7 @@ interface QuoteFormProps {
 
 const UNITS = ["stuk", "m²", "m³", "uur", "forfait"];
 
-export function QuoteForm({ jobId, specialistId, existingQuote, onSaved }: QuoteFormProps) {
+export function QuoteForm({ jobId, propertyId, specialistId, existingQuote, onSaved }: QuoteFormProps) {
   const supabase = createClient();
   const [saving, setSaving] = useState(false);
 
@@ -123,6 +125,33 @@ export function QuoteForm({ jobId, specialistId, existingQuote, onSaved }: Quote
 
       if (submit) {
         await supabase.from("jobs").update({ status: "quoted" }).eq("id", jobId);
+
+        const { data: jobData } = await supabase
+          .from("jobs")
+          .select("property:properties(owner_id)")
+          .eq("id", jobId)
+          .single();
+
+        const ownerId = (jobData?.property as unknown as { owner_id: string } | null)?.owner_id;
+        if (ownerId) {
+          await notify({
+            supabase,
+            userId: ownerId,
+            type: "quote_submitted",
+            title: "Nieuwe offerte ontvangen",
+            body: `Totaal: €${grandTotal.toLocaleString("nl-BE", { minimumFractionDigits: 2 })}`,
+            metadata: { job_id: jobId, quote_id: quoteId },
+          });
+        }
+
+        await addTimelineEvent({
+          supabase,
+          propertyId,
+          jobId,
+          actorId: specialistId,
+          action: "Offerte ingediend",
+          details: { total: grandTotal },
+        });
       }
 
       toast({

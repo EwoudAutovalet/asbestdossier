@@ -156,6 +156,41 @@ export interface QuoteLine {
 
 export type QuoteWithLines = Quote & { lines: QuoteLine[] };
 
+export type NotificationType =
+  | "quote_submitted"
+  | "quote_approved"
+  | "quote_rejected"
+  | "job_status_changed"
+  | "message_received"
+  | "specialist_assigned"
+  | "inspection_completed"
+  | "removal_registered";
+
+export interface Message {
+  id: string;
+  job_id: string;
+  sender_id: string;
+  body: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface MessageWithSender extends Message {
+  sender: Profile;
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  body: string | null;
+  link: string | null;
+  read: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -193,6 +228,16 @@ export interface Database {
         Row: QuoteLine;
         Insert: Omit<QuoteLine, "id" | "total" | "created_at">;
         Update: Partial<Omit<QuoteLine, "id" | "total" | "created_at">>;
+      };
+      messages: {
+        Row: Message;
+        Insert: Omit<Message, "id" | "created_at">;
+        Update: Partial<Omit<Message, "id" | "created_at">>;
+      };
+      notifications: {
+        Row: Notification;
+        Insert: Omit<Notification, "id" | "created_at">;
+        Update: Partial<Omit<Notification, "id" | "created_at">>;
       };
     };
   };

@@ -40,10 +40,16 @@ const statusVariant: Record<PropertyStatus, "warning" | "info" | "purple" | "suc
   cleared: "success",
 };
 
+type SortField = "created_at" | "address" | "city" | "status";
+type SortDir = "asc" | "desc";
+
 export function DossiersContent({ profile, properties }: DossiersContentProps) {
   const router = useRouter();
   const supabase = createClient();
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<PropertyStatus | "all">("all");
+  const [sortField, setSortField] = useState<SortField>("created_at");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -53,10 +59,26 @@ export function DossiersContent({ profile, properties }: DossiersContentProps) {
   const [newPostalCode, setNewPostalCode] = useState("");
   const [newDescription, setNewDescription] = useState("");
 
-  const filtered = properties.filter((p) =>
-    [p.address, p.city, p.postal_code]
-      .some((s) => s.toLowerCase().includes(search.toLowerCase()))
-  );
+  const filtered = properties
+    .filter((p) =>
+      [p.address, p.city, p.postal_code]
+        .some((s) => s.toLowerCase().includes(search.toLowerCase()))
+    )
+    .filter((p) => statusFilter === "all" || p.status === statusFilter)
+    .sort((a, b) => {
+      const dir = sortDir === "asc" ? 1 : -1;
+      if (sortField === "created_at") return dir * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      return dir * a[sortField].localeCompare(b[sortField]);
+    });
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  }
 
   function resetForm() {
     setNewAddress("");
@@ -118,7 +140,7 @@ export function DossiersContent({ profile, properties }: DossiersContentProps) {
           <h1 className="text-2xl font-extrabold tracking-tight">Dossiers</h1>
           <p className="text-muted-foreground text-sm mt-1">{filtered.length} panden</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input
@@ -128,6 +150,16 @@ export function DossiersContent({ profile, properties }: DossiersContentProps) {
               className="pl-9 w-60"
             />
           </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as PropertyStatus | "all")}
+            className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">Alle statussen</option>
+            {(Object.entries(PROPERTY_STATUS_LABELS) as [PropertyStatus, string][]).map(([key, label]) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
           {profile.role === "owner" && (
             <Button onClick={() => setShowCreate(true)}>
               <Plus className="w-4 h-4 mr-2" />
@@ -233,10 +265,18 @@ export function DossiersContent({ profile, properties }: DossiersContentProps) {
         <CardContent className="p-0">
           {/* Table Header */}
           <div className="grid grid-cols-[1fr_160px_160px_100px_40px] gap-4 px-6 py-3 bg-muted/50 border-b text-xs font-bold text-muted-foreground uppercase tracking-wider">
-            <span>Adres</span>
-            <span>Gemeente</span>
-            <span>Status</span>
-            <span>Datum</span>
+            <button onClick={() => toggleSort("address")} className="text-left hover:text-foreground transition-colors">
+              Adres {sortField === "address" && (sortDir === "asc" ? "↑" : "↓")}
+            </button>
+            <button onClick={() => toggleSort("city")} className="text-left hover:text-foreground transition-colors">
+              Gemeente {sortField === "city" && (sortDir === "asc" ? "↑" : "↓")}
+            </button>
+            <button onClick={() => toggleSort("status")} className="text-left hover:text-foreground transition-colors">
+              Status {sortField === "status" && (sortDir === "asc" ? "↑" : "↓")}
+            </button>
+            <button onClick={() => toggleSort("created_at")} className="text-left hover:text-foreground transition-colors">
+              Datum {sortField === "created_at" && (sortDir === "asc" ? "↑" : "↓")}
+            </button>
             <span></span>
           </div>
 

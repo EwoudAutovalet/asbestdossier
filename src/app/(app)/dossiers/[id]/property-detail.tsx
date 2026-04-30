@@ -58,6 +58,7 @@ import type {
 import { PROPERTY_STATUS_LABELS, JOB_STATUS_LABELS, RISK_LEVEL_LABELS, CONDITION_LABELS, PRIORITY_LABELS } from "@/lib/types";
 import { QuoteForm } from "@/components/quotes/quote-form";
 import { QuoteDetail } from "@/components/quotes/quote-detail";
+import { ChatPanel } from "@/components/chat/chat-panel";
 import { downloadAsbestReport } from "@/components/pdf/asbestos-report";
 
 interface PropertyDetailProps {
@@ -803,6 +804,7 @@ export function PropertyDetail({
                         <div className="mt-3 pt-3 border-t">
                           <QuoteForm
                             jobId={job.id}
+                            propertyId={property.id}
                             specialistId={profile.id}
                             existingQuote={job.quotes.length > 0 ? job.quotes[0] : null}
                             onSaved={() => router.refresh()}
@@ -814,9 +816,16 @@ export function PropertyDetail({
                           <QuoteDetail
                             quote={job.quotes[0]}
                             jobId={job.id}
+                            propertyId={property.id}
+                            currentUserId={profile.id}
                             onResponded={() => router.refresh()}
                           />
                         </div>
+                      )}
+
+                      {/* Chat */}
+                      {job.specialist_id && (
+                        <ChatPanel jobId={job.id} currentUser={profile} />
                       )}
 
                       {/* Status update controls */}
