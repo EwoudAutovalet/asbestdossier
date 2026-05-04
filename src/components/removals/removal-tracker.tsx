@@ -29,7 +29,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import type { Removal } from "@/lib/types";
+import type { Removal, RemovalMethodType } from "@/lib/types";
+import { notify } from "@/lib/notifications";
 
 interface RemovalTrackerProps {
   jobId: string;
@@ -46,6 +47,7 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
   const [componentName, setComponentName] = useState("");
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
+  const [handlingMethod, setHandlingMethod] = useState<RemovalMethodType | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -54,6 +56,7 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
     setComponentName("");
     setLocation("");
     setDescription("");
+    setHandlingMethod(null);
     setPhotoFile(null);
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoPreview("");
@@ -69,7 +72,7 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!componentName.trim() || !location.trim()) return;
+    if (!componentName.trim() || !location.trim() || !handlingMethod) return;
     setSaving(true);
 
     try {
@@ -106,6 +109,7 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
         component_name: componentName.trim(),
         location: location.trim(),
         description: description.trim() || null,
+        handling_method: handlingMethod,
         photo_url: photoUrl,
         photo_file_name: photoFileName,
       });
@@ -132,6 +136,24 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
             has_photo: !!photoUrl,
           },
         });
+
+        const { data: property } = await supabase
+          .from("properties")
+          .select("owner_id, address, city")
+          .eq("id", job.property_id)
+          .single();
+
+        if (property) {
+          await notify({
+            supabase,
+            userId: property.owner_id,
+            type: "removal_registered",
+            title: "Verwijdering geregistreerd",
+            body: `${componentName.trim()} is verwijderd op ${property.address}, ${property.city}`,
+            link: `/dossiers/${job.property_id}`,
+            metadata: { job_id: jobId, component: componentName.trim() },
+          });
+        }
       }
 
       resetForm();
@@ -232,6 +254,39 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
                   rows={2}
                   className="resize-none"
                 />
+              </div>
+
+              {/* Vlarem II handling method — required */}
+              <div className="space-y-2">
+                <Label>
+                  Handelingswijze (Vlarem II) <span className="text-destructive">*</span>
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHandlingMethod("eenvoudige_handeling")}
+                    className={`p-3 rounded-lg border text-left text-xs font-medium transition-colors ${
+                      handlingMethod === "eenvoudige_handeling"
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-border hover:border-blue-300"
+                    }`}
+                  >
+                    <div className="font-semibold mb-0.5">Eenvoudige handeling</div>
+                    <div className="text-[10px] text-muted-foreground font-normal">Hechtgebonden materiaal, geen respiratoire blootstelling</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHandlingMethod("hermetische_zone")}
+                    className={`p-3 rounded-lg border text-left text-xs font-medium transition-colors ${
+                      handlingMethod === "hermetische_zone"
+                        ? "border-orange-500 bg-orange-50 text-orange-700"
+                        : "border-border hover:border-orange-300"
+                    }`}
+                  >
+                    <div className="font-semibold mb-0.5">Hermetische zone</div>
+                    <div className="text-[10px] text-muted-foreground font-normal">Losgebonden materiaal, volledige insluiting vereist</div>
+                  </button>
+                </div>
               </div>
 
               {/* Photo capture */}
@@ -353,9 +408,17 @@ export function RemovalTracker({ jobId, removals }: RemovalTrackerProps) {
                       {r.location}
                     </div>
                   </div>
-                  <Badge variant="success" className="shrink-0 text-[10px]">
-                    Verwijderd
-                  </Badge>
+                  <div className="flex flex-col gap-1 items-end shrink-0">
+                    <Badge variant="success" className="text-[10px]">Verwijderd</Badge>
+                    {r.handling_method && (
+                      <Badge
+                        variant={r.handling_method === "hermetische_zone" ? "warning" : "info"}
+                        className="text-[10px]"
+                      >
+                        {r.handling_method === "hermetische_zone" ? "Hermetische zone" : "Eenvoudige hdl."}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 {r.description && (
                   <p className="text-xs text-muted-foreground mt-2 line-clamp-2">

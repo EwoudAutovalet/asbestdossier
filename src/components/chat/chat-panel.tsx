@@ -120,7 +120,7 @@ export function ChatPanel({ jobId, currentUser }: ChatPanelProps) {
 
       const { data: jobData } = await supabase
         .from("jobs")
-        .select("specialist_id, property:properties(owner_id)")
+        .select("specialist_id, property_id, property:properties(owner_id)")
         .eq("id", jobId)
         .single();
 
@@ -136,7 +136,7 @@ export function ChatPanel({ jobId, currentUser }: ChatPanelProps) {
             type: "message_received",
             title: "Nieuw bericht",
             body: body.length > 80 ? body.slice(0, 80) + "..." : body,
-            link: null,
+            link: `/dossiers/${jobData.property_id}`,
             read: false,
             metadata: { job_id: jobId, sender_name: currentUser.full_name },
           });

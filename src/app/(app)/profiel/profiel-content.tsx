@@ -22,13 +22,15 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "@/hooks/use-toast";
-import type { Profile } from "@/lib/types";
+import type { Profile, BrokerOwner } from "@/lib/types";
+import { notify } from "@/lib/notifications";
 
 interface ProfielContentProps {
   profile: Profile;
+  pendingInvitations?: (BrokerOwner & { broker: Profile })[];
 }
 
-export function ProfielContent({ profile }: ProfielContentProps) {
+export function ProfielContent({ profile, pendingInvitations = [] }: ProfielContentProps) {
   const router = useRouter();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -179,7 +181,7 @@ export function ProfielContent({ profile }: ProfielContentProps) {
             <h2 className="font-bold text-lg">{fullName}</h2>
             <p className="text-sm text-muted-foreground">{profile.email}</p>
             <p className="text-xs text-muted-foreground mt-1 uppercase tracking-wider">
-              {profile.role === "owner" ? "Eigenaar" : "Specialist"}
+              {profile.role === "owner" ? "Eigenaar" : profile.role === "broker" ? "Makelaar" : "Specialist"}
             </p>
             <Separator className="my-4 w-full" />
             <Button
@@ -316,6 +318,69 @@ export function ProfielContent({ profile }: ProfielContentProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Broker invitations */}
+      {pendingInvitations.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-sm font-bold flex items-center gap-2">
+              <Mail className="w-4 h-4" />
+              Uitnodigingen van makelaars
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {pendingInvitations.map((inv) => (
+              <div key={inv.id} className="flex items-center gap-4 px-5 py-3 border-t">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold">{inv.broker.full_name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {inv.broker.company_name || inv.broker.email} wil uw panden beheren
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    className="text-xs"
+                    onClick={async () => {
+                      await supabase
+                        .from("broker_owners")
+                        .update({ status: "active", accepted_at: new Date().toISOString() })
+                        .eq("id", inv.id);
+                      await notify({
+                        supabase,
+                        userId: inv.broker_id,
+                        type: "broker_accepted",
+                        title: "Uitnodiging geaccepteerd",
+                        body: `${profile.full_name} heeft uw uitnodiging geaccepteerd.`,
+                        link: "/eigenaars",
+                      });
+                      toast({ title: "Uitnodiging geaccepteerd", variant: "success" });
+                      router.refresh();
+                    }}
+                  >
+                    Accepteren
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-destructive"
+                    onClick={async () => {
+                      await supabase
+                        .from("broker_owners")
+                        .update({ status: "revoked" })
+                        .eq("id", inv.id);
+                      toast({ title: "Uitnodiging geweigerd" });
+                      router.refresh();
+                    }}
+                  >
+                    Weigeren
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Password change */}
       <Card className="mt-6">

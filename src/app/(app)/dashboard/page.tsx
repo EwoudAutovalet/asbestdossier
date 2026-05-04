@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
 import { DashboardContent } from "./dashboard-content";
-import type { Profile, Job, Property, TimelineEvent, Quote } from "@/lib/types";
+import type { Profile, Job, Property, TimelineEvent, Quote, Appointment } from "@/lib/types";
 
 export default async function DashboardPage() {
   const supabase = await createServerSupabaseClient();
@@ -55,6 +55,33 @@ export default async function DashboardPage() {
         (q) => (q.job?.property as Property)?.owner_id === user.id
       );
     }
+  } else if (typedProfile.role === "broker") {
+    const { data: boData } = await supabase
+      .from("broker_owners")
+      .select("owner_id")
+      .eq("broker_id", user.id)
+      .eq("status", "active");
+    const ownerIds = (boData || []).map((bo) => bo.owner_id);
+
+    if (ownerIds.length > 0) {
+      const { data } = await supabase
+        .from("jobs")
+        .select("*, property:properties!inner(*), specialist:profiles(*)")
+        .in("property.owner_id", ownerIds)
+        .order("created_at", { ascending: false });
+      jobs = (data || []) as typeof jobs;
+
+      const { data: quoteData } = await supabase
+        .from("quotes")
+        .select("*, job:jobs(*, property:properties(*))")
+        .eq("status", "submitted")
+        .order("created_at", { ascending: false });
+      if (quoteData) {
+        pendingQuotes = (quoteData as typeof pendingQuotes).filter(
+          (q) => ownerIds.includes((q.job?.property as Property)?.owner_id)
+        );
+      }
+    }
   } else {
     const { data } = await supabase
       .from("jobs")
@@ -76,13 +103,71 @@ export default async function DashboardPage() {
   }
 
   let properties: Property[] = [];
-  if (typedProfile.role === "owner") {
-    const { data } = await supabase
-      .from("properties")
+  if (typedProfile.role === "owner" || typedProfile.role === "broker") {
+    if (typedProfile.role === "owner") {
+      const { data } = await supabase
+        .from("properties")
+        .select("*")
+        .eq("owner_id", user.id)
+        .order("created_at", { ascending: false });
+      properties = (data || []) as Property[];
+    } else {
+      const { data: boData } = await supabase
+        .from("broker_owners")
+        .select("owner_id")
+        .eq("broker_id", user.id)
+        .eq("status", "active");
+      const ownerIds = (boData || []).map((bo) => bo.owner_id);
+      if (ownerIds.length > 0) {
+        const { data } = await supabase
+          .from("properties")
+          .select("*")
+          .in("owner_id", ownerIds)
+          .order("created_at", { ascending: false });
+        properties = (data || []) as Property[];
+      }
+    }
+  }
+
+  let upcomingAppointments: Appointment[] = [];
+  if (typedProfile.role === "specialist") {
+    const { data: aptData } = await supabase
+      .from("appointments")
+      .select("*")
+      .eq("specialist_id", user.id)
+      .gte("scheduled_start", new Date().toISOString())
+      .neq("status", "cancelled")
+      .order("scheduled_start", { ascending: true })
+      .limit(5);
+    upcomingAppointments = (aptData || []) as Appointment[];
+  } else if (typedProfile.role === "owner") {
+    const { data: aptData } = await supabase
+      .from("appointments")
       .select("*")
       .eq("owner_id", user.id)
-      .order("created_at", { ascending: false });
-    properties = (data || []) as Property[];
+      .gte("scheduled_start", new Date().toISOString())
+      .neq("status", "cancelled")
+      .order("scheduled_start", { ascending: true })
+      .limit(5);
+    upcomingAppointments = (aptData || []) as Appointment[];
+  } else if (typedProfile.role === "broker") {
+    const { data: boData } = await supabase
+      .from("broker_owners")
+      .select("owner_id")
+      .eq("broker_id", user.id)
+      .eq("status", "active");
+    const ownerIds = (boData || []).map((bo) => bo.owner_id);
+    if (ownerIds.length > 0) {
+      const { data: aptData } = await supabase
+        .from("appointments")
+        .select("*")
+        .in("owner_id", ownerIds)
+        .gte("scheduled_start", new Date().toISOString())
+        .neq("status", "cancelled")
+        .order("scheduled_start", { ascending: true })
+        .limit(5);
+      upcomingAppointments = (aptData || []) as Appointment[];
+    }
   }
 
   return (
@@ -92,6 +177,7 @@ export default async function DashboardPage() {
       properties={properties}
       timeline={timeline}
       pendingQuotes={pendingQuotes}
+      upcomingAppointments={upcomingAppointments}
     />
   );
 }

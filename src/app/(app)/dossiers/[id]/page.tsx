@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect, notFound } from "next/navigation";
 import { PropertyDetail } from "./property-detail";
-import type { Profile, Property, Job, Attachment, Removal, TimelineEvent, InspectionChecklist, ChecklistItem, QuoteWithLines } from "@/lib/types";
+import type { Profile, Property, Job, Attachment, Removal, TimelineEvent, InspectionChecklist, ChecklistItem, QuoteWithLines, InventoryCertificate, CertificateItem } from "@/lib/types";
 
 export default async function PropertyDetailPage({
   params,
@@ -59,6 +59,12 @@ export default async function PropertyDetailPage({
     .eq("role", "specialist")
     .order("full_name");
 
+  const { data: certificates } = await supabase
+    .from("inventory_certificates")
+    .select("*, items:certificate_items(*)")
+    .eq("property_id", id)
+    .order("created_at", { ascending: false });
+
   return (
     <PropertyDetail
       profile={profile as Profile}
@@ -67,6 +73,7 @@ export default async function PropertyDetailPage({
       jobs={(jobs || []) as (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[]; quotes: QuoteWithLines[] })[]}
       timeline={(timeline || []) as (TimelineEvent & { actor: Profile })[]}
       specialists={(specialists || []) as Profile[]}
+      certificates={(certificates || []) as (InventoryCertificate & { items: CertificateItem[] })[]}
     />
   );
 }

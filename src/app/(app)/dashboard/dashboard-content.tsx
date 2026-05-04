@@ -12,13 +12,14 @@ import {
   FileText,
   Activity,
   Zap,
+  CalendarDays,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import type { Profile, Property, Job, JobStatus, TimelineEvent, Quote } from "@/lib/types";
-import { JOB_STATUS_LABELS, QUOTE_STATUS_LABELS } from "@/lib/types";
+import type { Profile, Property, Job, JobStatus, TimelineEvent, Quote, Appointment } from "@/lib/types";
+import { JOB_STATUS_LABELS, QUOTE_STATUS_LABELS, APPOINTMENT_TYPE_LABELS } from "@/lib/types";
 
 interface DashboardContentProps {
   profile: Profile;
@@ -26,6 +27,7 @@ interface DashboardContentProps {
   properties: Property[];
   timeline: (TimelineEvent & { actor: Profile })[];
   pendingQuotes: (Quote & { job: Job & { property: Property } })[];
+  upcomingAppointments?: Appointment[];
 }
 
 const statusVariant: Record<JobStatus, "warning" | "info" | "purple" | "success" | "secondary" | "destructive"> = {
@@ -61,7 +63,7 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(diff / 86400)}d`;
 }
 
-export function DashboardContent({ profile, jobs, properties, timeline, pendingQuotes }: DashboardContentProps) {
+export function DashboardContent({ profile, jobs, properties, timeline, pendingQuotes, upcomingAppointments = [] }: DashboardContentProps) {
   const router = useRouter();
   const firstName = profile.full_name.split(" ")[0];
 
@@ -316,6 +318,48 @@ export function DashboardContent({ profile, jobs, properties, timeline, pendingQ
                   {prop.status === "new" ? "Nieuw" :
                    prop.status === "inspection" ? "Inspectie" :
                    prop.status === "remediation" ? "Verwijdering" : "Afgerond"}
+                </Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Upcoming appointments */}
+      {upcomingAppointments.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle className="text-sm font-bold flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-blue-500" />
+              Volgende afspraken
+            </CardTitle>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => router.push("/planning")}>
+              Bekijk alle <ArrowRight className="w-3 h-3 ml-1" />
+            </Button>
+          </CardHeader>
+          <CardContent className="p-0">
+            {upcomingAppointments.map((apt) => (
+              <div
+                key={apt.id}
+                className="flex items-center gap-3 px-5 py-3 border-t cursor-pointer hover:bg-muted/30 transition-colors"
+                onClick={() => router.push("/planning")}
+              >
+                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  apt.type === "inspection" ? "bg-blue-500" :
+                  apt.type === "removal" ? "bg-purple-500" : "bg-green-500"
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{apt.title}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(apt.scheduled_start).toLocaleDateString("nl-BE", {
+                      weekday: "short", day: "numeric", month: "short",
+                    })} — {new Date(apt.scheduled_start).toLocaleTimeString("nl-BE", {
+                      hour: "2-digit", minute: "2-digit",
+                    })}
+                  </div>
+                </div>
+                <Badge variant="info" className="text-[10px] shrink-0">
+                  {APPOINTMENT_TYPE_LABELS[apt.type]}
                 </Badge>
               </div>
             ))}

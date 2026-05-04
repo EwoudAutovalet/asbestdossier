@@ -140,6 +140,7 @@ export function QuoteForm({ jobId, propertyId, specialistId, existingQuote, onSa
             type: "quote_submitted",
             title: "Nieuwe offerte ontvangen",
             body: `Totaal: €${grandTotal.toLocaleString("nl-BE", { minimumFractionDigits: 2 })}`,
+            link: `/dossiers/${propertyId}`,
             metadata: { job_id: jobId, quote_id: quoteId },
           });
         }

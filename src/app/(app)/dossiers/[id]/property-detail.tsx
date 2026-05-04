@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import {
   ArrowLeft,
@@ -23,6 +23,12 @@ import {
   RefreshCw,
   ClipboardCheck,
   FileDown,
+  Shield,
+  CalendarDays,
+  Landmark,
+  Info,
+  Store,
+  FolderOpen,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -54,12 +60,28 @@ import type {
   PropertyStatus,
   JobStatus,
   QuoteWithLines,
+  InventoryCertificate,
+  CertificateItem,
 } from "@/lib/types";
-import { PROPERTY_STATUS_LABELS, JOB_STATUS_LABELS, RISK_LEVEL_LABELS, CONDITION_LABELS, PRIORITY_LABELS } from "@/lib/types";
+import { PROPERTY_STATUS_LABELS, JOB_STATUS_LABELS, RISK_LEVEL_LABELS, CONDITION_LABELS, PRIORITY_LABELS, CERTIFICATE_STATUS_LABELS, RECOMMENDED_ACTION_LABELS, REMOVAL_METHOD_LABELS } from "@/lib/types";
+import { toast } from "@/hooks/use-toast";
 import { QuoteForm } from "@/components/quotes/quote-form";
 import { QuoteDetail } from "@/components/quotes/quote-detail";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { downloadAsbestReport } from "@/components/pdf/asbestos-report";
+import { notify, addTimelineEvent } from "@/lib/notifications";
+import type { GebouwDetails, CalculatedRisk, ConditionScore, CoverageLevel, ExposureType } from "@/lib/types";
+import { CALCULATED_RISK_LABELS } from "@/lib/types";
+import { calculateRisk, RISK_BADGE_VARIANT } from "@/lib/risk-calculator";
+import { WorkflowStepper, type WorkflowStep } from "@/components/workflow/workflow-stepper";
+import { ContextActieBlok } from "@/components/workflow/context-actie-blok";
+import { StapInventaris } from "@/components/workflow/stap-inventaris";
+import { StapRisicobeoordeling } from "@/components/workflow/stap-risicobeoordeling";
+import { StapVerwijdering } from "@/components/workflow/stap-verwijdering";
+import { StapAfvalbewijs } from "@/components/workflow/stap-afvalbewijs";
+import { StapAsbestveilig } from "@/components/workflow/stap-asbestveilig";
+import { ActivityLogPanel } from "@/components/layout/activity-log-panel";
+import { DocumentArchief } from "@/components/documents/document-archief";
 
 interface PropertyDetailProps {
   profile: Profile;
@@ -68,6 +90,7 @@ interface PropertyDetailProps {
   jobs: (Job & { specialist: Profile | null; attachments: Attachment[]; removals: Removal[]; checklists: (InspectionChecklist & { items: ChecklistItem[] })[]; quotes: QuoteWithLines[] })[];
   timeline: (TimelineEvent & { actor: Profile })[];
   specialists: Profile[];
+  certificates?: (InventoryCertificate & { items: CertificateItem[] })[];
 }
 
 const statusVariant: Record<PropertyStatus, "warning" | "info" | "purple" | "success"> = {
@@ -118,6 +141,7 @@ export function PropertyDetail({
   jobs,
   timeline,
   specialists,
+  certificates = [],
 }: PropertyDetailProps) {
   const router = useRouter();
   const supabase = createClient();
@@ -132,6 +156,18 @@ export function PropertyDetail({
   const [assigningSpec, setAssigningSpec] = useState(false);
 
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
+
+  const [disposalUploadJobId, setDisposalUploadJobId] = useState<string | null>(null);
+  const [disposalRef, setDisposalRef] = useState("");
+  const [disposalFile, setDisposalFile] = useState<File | null>(null);
+  const [uploadingDisposal, setUploadingDisposal] = useState(false);
+
+  const searchParams = useSearchParams();
+  const stapParam = searchParams.get("stap");
+  const [activeStep, setActiveStep] = useState<number>(stapParam ? parseInt(stapParam) : 1);
+  const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showDocuments, setShowDocuments] = useState(false);
+  const [markingCleared, setMarkingCleared] = useState(false);
 
   const allAttachments = jobs.flatMap((j) => j.attachments);
   const sitePhotos = allAttachments.filter((a) => a.type === "site_photo");
@@ -192,12 +228,23 @@ export function PropertyDetail({
 
       if (updateError) throw updateError;
 
-      await supabase.from("timeline_events").insert({
-        property_id: property.id,
-        job_id: jobId,
-        actor_id: user.id,
+      await addTimelineEvent({
+        supabase,
+        propertyId: property.id,
+        jobId,
+        actorId: user.id,
         action: `Specialist toegewezen: ${specialist?.company_name || specialist?.full_name || "Onbekend"}`,
         details: { specialist_id: specialistId },
+      });
+
+      await notify({
+        supabase,
+        userId: specialistId,
+        type: "specialist_assigned",
+        title: "Nieuwe opdracht toegewezen",
+        body: `Je bent toegewezen aan een opdracht op ${property.address}, ${property.city}`,
+        link: `/dossiers/${property.id}`,
+        metadata: { job_id: jobId, property_id: property.id },
       });
 
       setShowAssign(null);
@@ -250,6 +297,50 @@ export function PropertyDetail({
           .neq("status", "cancelled");
 
         if (!remainingJobs || remainingJobs.length === 0) {
+          // GAP 3: prerequisite checks before marking property as cleared
+
+          // 1. At least one issued OVAM inventory certificate
+          const { data: issuedCerts } = await supabase
+            .from("inventory_certificates")
+            .select("id")
+            .eq("property_id", property.id)
+            .eq("status", "issued")
+            .limit(1);
+
+          if (!issuedCerts || issuedCerts.length === 0) {
+            toast({
+              title: "Pand kan niet worden afgesloten",
+              description: "Er is nog geen uitgegeven asbestattest (OVAM) voor dit pand. Maak eerst een attest op.",
+              variant: "destructive",
+            });
+            return;
+          }
+
+          // 2. Every completed job with removals needs a disposal certificate (VLAREMA)
+          const completedJobIds = jobs
+            .filter((j) => (j.status === "completed" || j.id === jobId) && (j.removals || []).length > 0)
+            .map((j) => j.id);
+
+          if (completedJobIds.length > 0) {
+            const { data: certAttachments } = await supabase
+              .from("attachments")
+              .select("job_id")
+              .in("job_id", completedJobIds)
+              .eq("type", "disposal_certificate");
+
+            const coveredIds = new Set((certAttachments || []).map((a) => a.job_id));
+            const missing = completedJobIds.filter((id) => !coveredIds.has(id));
+
+            if (missing.length > 0) {
+              toast({
+                title: "Pand kan niet worden afgesloten",
+                description: `Er ontbreekt een bewijs van afvalverwerking (VLAREMA) voor ${missing.length} opdracht${missing.length > 1 ? "en" : ""} met verwijderingen.`,
+                variant: "destructive",
+              });
+              return;
+            }
+          }
+
           await supabase
             .from("properties")
             .update({ status: "cleared" })
@@ -270,6 +361,49 @@ export function PropertyDetail({
     }
   }
 
+  async function handleDisposalUpload(jobId: string) {
+    if (!disposalFile) return;
+    setUploadingDisposal(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Niet ingelogd");
+
+      const timestamp = Date.now();
+      const sanitized = disposalFile.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const path = `${jobId}/disposal/${timestamp}_${sanitized}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("property-media")
+        .upload(path, disposalFile);
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage.from("property-media").getPublicUrl(path);
+
+      const { error: dbError } = await supabase.from("attachments").insert({
+        job_id: jobId,
+        uploaded_by: user.id,
+        file_url: urlData.publicUrl,
+        file_name: disposalFile.name,
+        file_size: disposalFile.size,
+        mime_type: disposalFile.type,
+        type: "disposal_certificate",
+        description: null,
+        disposal_reference: disposalRef.trim() || null,
+        metadata: {},
+      });
+      if (dbError) throw dbError;
+
+      setDisposalUploadJobId(null);
+      setDisposalRef("");
+      setDisposalFile(null);
+      router.refresh();
+    } catch (err) {
+      console.error("Disposal cert upload failed:", err);
+    } finally {
+      setUploadingDisposal(false);
+    }
+  }
+
   const jobStatusFlow: JobStatus[] = [
     "pending", "inspection", "quoted", "approved", "in_progress", "completed",
   ];
@@ -278,6 +412,85 @@ export function PropertyDetail({
     const idx = jobStatusFlow.indexOf(current);
     if (idx === -1 || current === "completed" || current === "cancelled") return [];
     return jobStatusFlow.slice(idx + 1).concat(["cancelled"]);
+  }
+
+  // Step status calculations
+  const hasIssuedCertificate = certificates.some((c) => c.status === "issued");
+  const hasCompletedInspection = allChecklists.some((c) => c.completed === true);
+  const hasActiveJob = jobs.some((j) => ["in_progress", "completed"].includes(j.status));
+  const allJobsCompleted =
+    jobs.length > 0 && jobs.every((j) => j.status === "completed" || j.status === "cancelled");
+  const jobsWithRemovals = jobs.filter((j) => (j.removals || []).length > 0);
+  const hasDisposalProofForAllJobs =
+    jobsWithRemovals.length === 0 ||
+    jobsWithRemovals.every((j) => j.attachments.some((a) => a.type === "disposal_certificate"));
+  const allRemovalsPhotographed =
+    allRemovals.length === 0 || allRemovals.every((r) => !!r.photo_url);
+
+  const stepStatuses: Record<number, WorkflowStep["status"]> = {
+    1: hasIssuedCertificate ? "completed" : activeStep === 1 ? "active" : "pending",
+    2: hasCompletedInspection
+      ? "completed"
+      : !hasIssuedCertificate
+      ? "blocked"
+      : activeStep === 2
+      ? "active"
+      : "pending",
+    3: allJobsCompleted
+      ? "completed"
+      : !hasCompletedInspection
+      ? "blocked"
+      : activeStep === 3
+      ? "active"
+      : "pending",
+    4:
+      hasDisposalProofForAllJobs && jobsWithRemovals.length > 0
+        ? "completed"
+        : !hasActiveJob
+        ? "blocked"
+        : activeStep === 4
+        ? "active"
+        : "pending",
+    5: property.status === "cleared"
+      ? "completed"
+      : !hasDisposalProofForAllJobs
+      ? "blocked"
+      : activeStep === 5
+      ? "active"
+      : "pending",
+  };
+
+  const workflowSteps: WorkflowStep[] = [
+    { id: 1, label: "Inventaris", sublabel: "AIA-attest", status: stepStatuses[1] },
+    { id: 2, label: "Risicobeoordeling", sublabel: "IP2 Inspectie", status: stepStatuses[2] },
+    { id: 3, label: "Verwijdering", sublabel: "Strategie & Opdrachten", status: stepStatuses[3] },
+    { id: 4, label: "Afvalbewijs", sublabel: "VLAREMA Certificaat", status: stepStatuses[4] },
+    { id: 5, label: "Asbestveilig", sublabel: "Dossierafsluiting", status: stepStatuses[5] },
+  ];
+
+  function handleStepClick(stepId: number) {
+    setActiveStep(stepId);
+    router.replace(`/dossiers/${property.id}?stap=${stepId}`, { scroll: false });
+  }
+
+  async function handleMarkAsbestveilig() {
+    setMarkingCleared(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Niet ingelogd");
+      await supabase.from("properties").update({ status: "cleared" }).eq("id", property.id);
+      await supabase.from("timeline_events").insert({
+        property_id: property.id,
+        actor_id: user.id,
+        action: "Pand officieel Asbestveilig verklaard",
+        details: { cleared_at: new Date().toISOString() },
+      });
+      router.refresh();
+    } catch (err) {
+      console.error("Mark cleared failed:", err);
+    } finally {
+      setMarkingCleared(false);
+    }
   }
 
   return (
@@ -336,93 +549,158 @@ export function PropertyDetail({
               <Badge variant={statusVariant[property.status]} className="mb-3">
                 {PROPERTY_STATUS_LABELS[property.status]}
               </Badge>
-              <div className="w-44">
-                <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
-                  <span>Voortgang</span>
-                  <span>{progress}%</span>
-                </div>
-                <Progress value={progress} className="h-2" />
+              <div className="flex gap-2 mt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() =>
+                    downloadAsbestReport({ property, owner, jobs })
+                  }
+                >
+                  <FileDown className="w-3.5 h-3.5 mr-1.5" />
+                  PDF Rapport
+                </Button>
+                {profile.role === "specialist" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => router.push(`/dossiers/${property.id}/attest`)}
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5 mr-1.5" />
+                    AIA Attest
+                  </Button>
+                )}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 text-xs"
-                onClick={() =>
-                  downloadAsbestReport({ property, owner, jobs })
-                }
-              >
-                <FileDown className="w-3.5 h-3.5 mr-1.5" />
-                PDF Rapport
-              </Button>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
-              <FileText className="w-4 h-4 text-blue-600" />
-            </div>
-            <div>
-              <div className="text-lg font-bold font-mono">{jobs.length}</div>
-              <div className="text-xs text-muted-foreground">Opdrachten</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-green-50 flex items-center justify-center">
-              <ImageIcon className="w-4 h-4 text-green-600" />
-            </div>
-            <div>
-              <div className="text-lg font-bold font-mono">{sitePhotos.length}</div>
-              <div className="text-xs text-muted-foreground">Sitefoto&apos;s</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center">
-              <ScanLine className="w-4 h-4 text-amber-600" />
-            </div>
-            <div>
-              <div className="text-lg font-bold font-mono">{paperScans.length}</div>
-              <div className="text-xs text-muted-foreground">Documenten</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center">
-              <Package className="w-4 h-4 text-red-600" />
-            </div>
-            <div>
-              <div className="text-lg font-bold font-mono">{allRemovals.length}</div>
-              <div className="text-xs text-muted-foreground">Verwijderingen</div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center">
-              <Clock className="w-4 h-4 text-purple-600" />
-            </div>
-            <div>
-              <div className="text-lg font-bold font-mono">{timeline.length}</div>
-              <div className="text-xs text-muted-foreground">Activiteiten</div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Gebouwgegevens */}
+      <GebouwgegevensCard property={property} />
+
+      {/* Context actie blok */}
+      <ContextActieBlok
+        role={profile.role}
+        hasIssuedCertificate={hasIssuedCertificate}
+        hasCompletedInspection={hasCompletedInspection}
+        hasActiveJob={hasActiveJob}
+        hasDisposalProofForAllJobs={hasDisposalProofForAllJobs}
+        isCleared={property.status === "cleared"}
+        className="mb-5"
+      />
+
+      {/* Workflow stepper */}
+      <div className="mb-5">
+        <WorkflowStepper
+          steps={workflowSteps}
+          activeStep={activeStep}
+          onStepClick={handleStepClick}
+        />
       </div>
 
-      {/* Tabs */}
+      {/* Active step content */}
       <Card>
-        <Tabs defaultValue="timeline">
+        <CardContent className="p-5">
+          {activeStep === 1 && (
+            <StapInventaris
+              property={property}
+              certificates={certificates}
+              role={profile.role}
+              onNavigateToAttest={() => router.push(`/dossiers/${property.id}/attest`)}
+            />
+          )}
+          {activeStep === 2 && (
+            <StapRisicobeoordeling jobs={jobs} role={profile.role} />
+          )}
+          {activeStep === 3 && (
+            <StapVerwijdering
+              property={property}
+              jobs={jobs}
+              profile={profile}
+              specialists={specialists}
+              onCreateJob={() => setShowCreateJob(true)}
+              onAssignSpecialist={(jobId) => setShowAssign(jobId)}
+              onUpdateJobStatus={handleUpdateJobStatus}
+              updatingStatus={updatingStatus}
+            />
+          )}
+          {activeStep === 4 && (
+            <StapAfvalbewijs
+              jobs={jobs}
+              profile={profile}
+              disposalUploadJobId={disposalUploadJobId}
+              disposalRef={disposalRef}
+              disposalFile={disposalFile}
+              uploadingDisposal={uploadingDisposal}
+              onSetDisposalUploadJobId={setDisposalUploadJobId}
+              onSetDisposalRef={setDisposalRef}
+              onSetDisposalFile={setDisposalFile}
+              onUpload={handleDisposalUpload}
+            />
+          )}
+          {activeStep === 5 && (
+            <StapAsbestveilig
+              property={property}
+              hasIssuedCertificate={hasIssuedCertificate}
+              allJobsCompleted={allJobsCompleted}
+              allRemovalsPhotographed={allRemovalsPhotographed}
+              hasDisposalProofForAllJobs={hasDisposalProofForAllJobs}
+              onMarkAsbestveilig={handleMarkAsbestveilig}
+              markingCleared={markingCleared}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Footer actions */}
+      <div className="flex gap-3 mt-4 justify-end">
+        <Button variant="outline" size="sm" onClick={() => setShowDocuments(true)}>
+          <FolderOpen className="w-4 h-4 mr-2" />
+          Alle documenten
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setShowActivityLog(true)}>
+          <Clock className="w-4 h-4 mr-2" />
+          Activiteitenlog ({timeline.length})
+        </Button>
+      </div>
+
+      {/* Activity log slide-over */}
+      <ActivityLogPanel
+        timeline={timeline}
+        isOpen={showActivityLog}
+        onClose={() => setShowActivityLog(false)}
+      />
+
+      {/* Document archief dialog */}
+      <Dialog open={showDocuments} onOpenChange={setShowDocuments}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Alle documenten &amp; foto&apos;s</DialogTitle>
+          </DialogHeader>
+          <DocumentArchief attachments={allAttachments} />
+        </DialogContent>
+      </Dialog>
+
+      {/* LEGACY Tabs placeholder — replaced by workflow stepper above */}
+      {false && <Card>
+        <Tabs defaultValue="jobs">
           <CardHeader className="pb-0">
             <TabsList>
+              <TabsTrigger value="jobs">
+                <FileText className="w-4 h-4 mr-2" />
+                Opdrachten ({jobs.length})
+              </TabsTrigger>
+              <TabsTrigger value="inspections">
+                <ClipboardCheck className="w-4 h-4 mr-2" />
+                Inspecties ({allChecklists.length})
+              </TabsTrigger>
+              <TabsTrigger value="certificates">
+                <Shield className="w-4 h-4 mr-2" />
+                Attesten ({certificates.length})
+              </TabsTrigger>
               <TabsTrigger value="timeline">
                 <Clock className="w-4 h-4 mr-2" />
                 Tijdlijn ({timeline.length})
@@ -438,14 +716,6 @@ export function PropertyDetail({
               <TabsTrigger value="removals">
                 <Package className="w-4 h-4 mr-2" />
                 Verwijderingen ({allRemovals.length})
-              </TabsTrigger>
-              <TabsTrigger value="inspections">
-                <ClipboardCheck className="w-4 h-4 mr-2" />
-                Inspecties ({allChecklists.length})
-              </TabsTrigger>
-              <TabsTrigger value="jobs">
-                <FileText className="w-4 h-4 mr-2" />
-                Opdrachten ({jobs.length})
               </TabsTrigger>
             </TabsList>
           </CardHeader>
@@ -613,9 +883,17 @@ export function PropertyDetail({
                               {r.location}
                             </div>
                           </div>
-                          <Badge variant="success" className="shrink-0 text-[10px]">
-                            Verwijderd
-                          </Badge>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <Badge variant="success" className="text-[10px]">Verwijderd</Badge>
+                            {r.handling_method && (
+                              <Badge
+                                variant={r.handling_method === "hermetische_zone" ? "warning" : "info"}
+                                className="text-[10px]"
+                              >
+                                {r.handling_method === "hermetische_zone" ? "Hermetisch" : "Eenvoudig"}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                         {r.description && (
                           <p className="text-xs text-muted-foreground mt-2 line-clamp-2">
@@ -729,13 +1007,89 @@ export function PropertyDetail({
               )}
             </TabsContent>
 
+            {/* CERTIFICATES */}
+            <TabsContent value="certificates">
+              {certificates.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  <Shield className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                  Nog geen attesten voor dit pand.
+                  {profile.role === "specialist" && (
+                    <div className="mt-3">
+                      <Button size="sm" variant="outline" onClick={() => router.push(`/dossiers/${property.id}/attest`)}>
+                        <Plus className="w-4 h-4 mr-1.5" />
+                        Attest opmaken
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {certificates.map((cert) => (
+                    <div key={cert.id} className="p-4 rounded-lg border">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <div className="text-sm font-mono font-bold">{cert.certificate_number}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {cert.issued_at
+                              ? `Uitgegeven: ${new Date(cert.issued_at).toLocaleDateString("nl-BE", { day: "numeric", month: "short", year: "numeric" })}`
+                              : "Concept"
+                            }
+                            {cert.expires_at && ` — Vervalt: ${new Date(cert.expires_at).toLocaleDateString("nl-BE", { day: "numeric", month: "short", year: "numeric" })}`}
+                          </div>
+                        </div>
+                        <Badge variant={
+                          cert.status === "issued" ? "success" :
+                          cert.status === "expired" ? "destructive" :
+                          cert.status === "revoked" ? "destructive" : "warning"
+                        }>
+                          {CERTIFICATE_STATUS_LABELS[cert.status]}
+                        </Badge>
+                      </div>
+                      {cert.conclusion && (
+                        <p className="text-xs text-muted-foreground mt-2 bg-muted/50 p-2 rounded">
+                          {cert.conclusion}
+                        </p>
+                      )}
+                      {cert.items.length > 0 && (
+                        <div className="mt-3 space-y-1.5">
+                          {cert.items.map((item) => (
+                            <div key={item.id} className="flex items-center gap-2 text-xs p-2 rounded bg-muted/30">
+                              <Badge variant={
+                                item.risk_level === "kritiek" || item.risk_level === "hoog" ? "destructive" :
+                                item.risk_level === "gemiddeld" ? "warning" : "success"
+                              } className="text-[9px]">
+                                {RISK_LEVEL_LABELS[item.risk_level]}
+                              </Badge>
+                              <span className="font-medium">{item.material_type}</span>
+                              <span className="text-muted-foreground">— {item.location}</span>
+                              <Badge variant="secondary" className="text-[9px] ml-auto">
+                                {RECOMMENDED_ACTION_LABELS[item.recommended_action]}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
             {/* JOBS */}
             <TabsContent value="jobs">
-              {profile.role === "owner" && (
-                <div className="mb-4">
+              {(profile.role === "owner" || profile.role === "broker") && (
+                <div className="mb-4 flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => setShowCreateJob(true)}>
                     <Plus className="w-4 h-4 mr-1.5" />
                     Nieuwe opdracht
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => router.push("/markt/nieuw")}>
+                    <Store className="w-4 h-4 mr-1.5" />
+                    Op marktplaats plaatsen
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => router.push("/planning")}>
+                    <CalendarDays className="w-4 h-4 mr-1.5" />
+                    Plan afspraak
                   </Button>
                 </div>
               )}
@@ -769,19 +1123,29 @@ export function PropertyDetail({
                             </button>
                           ) : null}
                         </div>
-                        <Badge
-                          variant={
-                            job.status === "completed"
-                              ? "success"
-                              : job.status === "in_progress"
-                              ? "purple"
-                              : job.status === "cancelled"
-                              ? "destructive"
-                              : "info"
-                          }
-                        >
-                          {JOB_STATUS_LABELS[job.status]}
-                        </Badge>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <Badge
+                            variant={
+                              job.status === "completed"
+                                ? "success"
+                                : job.status === "in_progress"
+                                ? "purple"
+                                : job.status === "cancelled"
+                                ? "destructive"
+                                : "info"
+                            }
+                          >
+                            {JOB_STATUS_LABELS[job.status]}
+                          </Badge>
+                          {job.handling_method && (
+                            <Badge
+                              variant={job.handling_method === "hermetische_zone" ? "warning" : "info"}
+                              className="text-[10px]"
+                            >
+                              {REMOVAL_METHOD_LABELS[job.handling_method]}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                       {job.description && (
                         <p className="text-xs text-muted-foreground mb-2">{job.description}</p>
@@ -811,7 +1175,7 @@ export function PropertyDetail({
                           />
                         </div>
                       )}
-                      {profile.role === "owner" && job.quotes.length > 0 && (
+                      {(profile.role === "owner" || profile.role === "broker") && job.quotes.length > 0 && (
                         <div className="mt-3 pt-3 border-t">
                           <QuoteDetail
                             quote={job.quotes[0]}
@@ -829,7 +1193,7 @@ export function PropertyDetail({
                       )}
 
                       {/* Status update controls */}
-                      {profile.role === "owner" && getNextStatuses(job.status).length > 0 && (
+                      {(profile.role === "owner" || profile.role === "broker") && getNextStatuses(job.status).length > 0 && (
                         <div className="flex flex-wrap gap-2 pt-2 border-t">
                           <span className="text-xs text-muted-foreground mr-1 self-center">
                             <RefreshCw className="w-3 h-3 inline mr-1" />
@@ -853,6 +1217,81 @@ export function PropertyDetail({
                           ))}
                         </div>
                       )}
+
+                      {/* GAP 2: Bewijs van Afvalverwerking (VLAREMA) */}
+                      {(job.status === "in_progress" || job.status === "completed") && (
+                        <div className="mt-3 pt-3 border-t">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                              Bewijs van Afvalverwerking (VLAREMA)
+                            </span>
+                            {profile.role === "specialist" && job.specialist_id === profile.id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-xs h-7"
+                                onClick={() => {
+                                  setDisposalUploadJobId(disposalUploadJobId === job.id ? null : job.id);
+                                  setDisposalRef("");
+                                  setDisposalFile(null);
+                                }}
+                              >
+                                <Plus className="w-3 h-3 mr-1" />
+                                Certificaat toevoegen
+                              </Button>
+                            )}
+                          </div>
+                          {job.attachments.filter((a) => a.type === "disposal_certificate").map((cert) => (
+                            <div key={cert.id} className="flex items-center gap-2 p-2 rounded border bg-muted/20 mb-1">
+                              <FileText className="w-4 h-4 text-green-600 shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium truncate">{cert.file_name}</div>
+                                {cert.disposal_reference && (
+                                  <div className="text-[10px] text-muted-foreground">Ref: {cert.disposal_reference}</div>
+                                )}
+                              </div>
+                              <Badge variant="success" className="text-[10px] shrink-0">Afvalcertificaat</Badge>
+                            </div>
+                          ))}
+                          {job.attachments.filter((a) => a.type === "disposal_certificate").length === 0 && (
+                            <p className="text-xs text-muted-foreground">Nog geen afvalcertificaat geüpload.</p>
+                          )}
+                          {disposalUploadJobId === job.id && (
+                            <div className="mt-2 p-3 rounded-lg border border-primary/30 bg-primary/[0.02] space-y-2">
+                              <div className="space-y-1">
+                                <Label className="text-xs">Referentienummer afvalverwerker</Label>
+                                <Input
+                                  placeholder="Bijv. VLAREMA-2024-001"
+                                  value={disposalRef}
+                                  onChange={(e) => setDisposalRef(e.target.value)}
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Certificaat (PDF of afbeelding) <span className="text-destructive">*</span></Label>
+                                <input
+                                  type="file"
+                                  accept=".pdf,.jpg,.jpeg,.png"
+                                  className="text-xs w-full"
+                                  onChange={(e) => setDisposalFile(e.target.files?.[0] || null)}
+                                />
+                              </div>
+                              <Button
+                                size="sm"
+                                className="w-full text-xs"
+                                disabled={!disposalFile || uploadingDisposal}
+                                onClick={() => handleDisposalUpload(job.id)}
+                              >
+                                {uploadingDisposal ? (
+                                  <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Uploaden...</>
+                                ) : (
+                                  <><CheckCircle2 className="w-3 h-3 mr-1" />Certificaat uploaden</>
+                                )}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -860,7 +1299,7 @@ export function PropertyDetail({
             </TabsContent>
           </CardContent>
         </Tabs>
-      </Card>
+      </Card>}
 
       {/* Create Job Dialog */}
       <Dialog open={showCreateJob} onOpenChange={(open) => { if (!open) { setShowCreateJob(false); setJobTitle(""); setJobDescription(""); setJobError(""); } }}>
@@ -966,5 +1405,282 @@ export function PropertyDetail({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function RiskProfileCard({ checklists }: { checklists: (InspectionChecklist & { items: ChecklistItem[] })[] }) {
+  const allItems = checklists.flatMap((cl) => cl.items);
+  if (allItems.length === 0) return null;
+
+  const itemsWithRisk = allItems.map((item) => {
+    const risk = (item.calculated_risk as CalculatedRisk) || calculateRisk({
+      is_hechtgebonden: item.is_hechtgebonden ?? null,
+      condition_score: (item.condition_score as ConditionScore | null) ?? null,
+      exposure: (item.exposure as ExposureType | null) ?? null,
+      coverage: (item.coverage as CoverageLevel | null) ?? null,
+    });
+    return { ...item, risk };
+  });
+
+  const riskCounts: Record<CalculatedRisk, number> = { zeer_laag: 0, laag: 0, verhoogd: 0, hoog: 0 };
+  itemsWithRisk.forEach((i) => { riskCounts[i.risk]++; });
+  const total = itemsWithRisk.length;
+  const hechtCount = itemsWithRisk.filter((i) => i.is_hechtgebonden === true).length;
+  const losCount = itemsWithRisk.filter((i) => i.is_hechtgebonden === false).length;
+
+  const highestRiskItem = itemsWithRisk.find((i) => i.risk === "hoog") || itemsWithRisk.find((i) => i.risk === "verhoogd");
+
+  let overallBadge: { label: string; variant: "success" | "warning" | "destructive" } = { label: "Laag risico", variant: "success" };
+  if (riskCounts.hoog > 0) overallBadge = { label: "Hoog risico — actie vereist", variant: "destructive" };
+  else if (riskCounts.verhoogd > 0) overallBadge = { label: "Verhoogd risico", variant: "warning" };
+
+  const barSegments = [
+    { key: "zeer_laag", pct: (riskCounts.zeer_laag / total) * 100, color: "bg-green-500" },
+    { key: "laag", pct: (riskCounts.laag / total) * 100, color: "bg-blue-500" },
+    { key: "verhoogd", pct: (riskCounts.verhoogd / total) * 100, color: "bg-orange-500" },
+    { key: "hoog", pct: (riskCounts.hoog / total) * 100, color: "bg-red-500" },
+  ];
+
+  return (
+    <Card className="mb-5">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-semibold">Risicoprofiel</span>
+          </div>
+          <Badge variant={overallBadge.variant}>{overallBadge.label}</Badge>
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 text-center">
+          <div>
+            <div className="text-lg font-bold font-mono">{total}</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Materialen</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold font-mono">{hechtCount}</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Hechtgebonden</div>
+          </div>
+          <div>
+            <div className="text-lg font-bold font-mono">{losCount}</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Losgebonden</div>
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase">Risicoverdeling</div>
+          <div className="h-3 rounded-full overflow-hidden flex bg-muted">
+            {barSegments.filter((s) => s.pct > 0).map((s) => (
+              <div key={s.key} className={`${s.color} h-full`} style={{ width: `${s.pct}%` }} />
+            ))}
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            {barSegments.filter((s) => s.pct > 0).map((s) => (
+              <span key={s.key}>{CALCULATED_RISK_LABELS[s.key as CalculatedRisk]} ({Math.round(s.pct)}%)</span>
+            ))}
+          </div>
+        </div>
+
+        {highestRiskItem && (
+          <div className="p-2 rounded border border-red-200 bg-red-50/50 flex items-center gap-2">
+            <Badge variant="destructive" className="text-[10px] shrink-0">
+              {CALCULATED_RISK_LABELS[highestRiskItem.risk]}
+            </Badge>
+            <span className="text-xs truncate">
+              {highestRiskItem.location_description || highestRiskItem.category} — {highestRiskItem.item_name}
+            </span>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function GebouwgegevensCard({ property }: { property: Property }) {
+  const supabase = createClient();
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleLookup() {
+    const adresMatch = property.address.trim().match(/^(.+?)\s+(\d+\w*)$/);
+    const straat = adresMatch ? adresMatch[1] : property.address.trim();
+    const huisnummer = adresMatch ? adresMatch[2] : "";
+
+    if (!straat || !huisnummer) {
+      setError("Kan straat en huisnummer niet afleiden uit het adres");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        straat,
+        huisnummer,
+        postcode: property.postal_code,
+        stad: property.city,
+      });
+
+      const res = await fetch(`/api/basisregisters?${params}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Fout bij ophalen gebouwgegevens");
+        return;
+      }
+
+      if (!data.found) {
+        setError("Adres niet gevonden in het Gebouwenregister — je kunt handmatig doorgaan");
+        return;
+      }
+
+      const details: GebouwDetails = data.details;
+      await supabase
+        .from("properties")
+        .update({
+          gebouweenheid_id: details.gebouweenheidId,
+          gebouw_id: details.gebouwId,
+          perceel_id: details.perceelId,
+          bouwjaar: details.bouwjaar,
+          gebouw_status: details.status,
+          oppervlakte: details.oppervlakte,
+          verdiepingen: details.verdiepingen,
+          basisregisters_synced_at: new Date().toISOString(),
+        })
+        .eq("id", property.id);
+
+      router.refresh();
+    } catch {
+      setError("Verbindingsfout — probeer opnieuw");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const isLinked = !!property.gebouweenheid_id;
+
+  return (
+    <Card className="mb-5">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Landmark className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-semibold">Gebouwgegevens</span>
+            {isLinked && (
+              <Badge variant="success" className="text-[10px]">
+                <CheckCircle2 className="w-3 h-3 mr-1" />
+                Gekoppeld aan Gebouwenregister
+              </Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {property.bouwjaar && property.bouwjaar < 2001 && (
+              <Badge variant="warning" className="text-[10px]">
+                <AlertTriangle className="w-3 h-3 mr-1" />
+                Asbestattest verplicht (OVAM)
+              </Badge>
+            )}
+            {property.bouwjaar && property.bouwjaar >= 2001 && (
+              <Badge variant="success" className="text-[10px]">
+                Geen attestplicht
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        {isLinked ? (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-1.5 text-xs">
+              <div>
+                <span className="text-muted-foreground">Gebouweenheid:</span>{" "}
+                <span className="font-mono">{property.gebouweenheid_id}</span>
+              </div>
+              {property.bouwjaar && (
+                <div>
+                  <span className="text-muted-foreground">Bouwjaar:</span>{" "}
+                  <span className="font-medium">{property.bouwjaar}</span>
+                </div>
+              )}
+              {property.gebouw_status && (
+                <div>
+                  <span className="text-muted-foreground">Status:</span>{" "}
+                  <span className="font-medium capitalize">{property.gebouw_status}</span>
+                </div>
+              )}
+              {property.perceel_id && (
+                <div>
+                  <span className="text-muted-foreground">Perceel:</span>{" "}
+                  <span className="font-mono">{property.perceel_id}</span>
+                </div>
+              )}
+              {property.oppervlakte && (
+                <div>
+                  <span className="text-muted-foreground">Oppervlakte:</span>{" "}
+                  <span className="font-medium">{property.oppervlakte} m²</span>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleLookup}
+                disabled={loading}
+                className="text-xs text-muted-foreground"
+              >
+                {loading ? (
+                  <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                )}
+                Vernieuwen
+              </Button>
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Dit pand is nog niet gekoppeld aan het Vlaams Gebouwen- en Adressenregister.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleLookup}
+              disabled={loading}
+            >
+              {loading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Building2 className="w-4 h-4 mr-2" />
+              )}
+              Koppel aan Gebouwenregister
+            </Button>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200">
+            <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <span className="text-xs text-blue-800">{error}</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleLookup}
+              disabled={loading}
+              className="text-xs text-blue-700 h-auto p-0"
+            >
+              Opnieuw proberen
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

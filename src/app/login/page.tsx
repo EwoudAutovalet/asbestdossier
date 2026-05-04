@@ -104,7 +104,7 @@ export default function LoginPage() {
 
                     <div className="space-y-2">
                       <Label>Rol</Label>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
                           onClick={() => setRole("owner")}
@@ -128,6 +128,18 @@ export default function LoginPage() {
                         >
                           <User className="w-4 h-4 mx-auto mb-1" />
                           Specialist
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRole("broker")}
+                          className={`p-3 rounded-lg border text-sm font-medium transition-colors ${
+                            role === "broker"
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border hover:border-primary/50"
+                          }`}
+                        >
+                          <User className="w-4 h-4 mx-auto mb-1" />
+                          Makelaar
                         </button>
                       </div>
                     </div>

@@ -48,6 +48,7 @@ export function QuoteDetail({ quote, jobId, propertyId, currentUserId, onRespond
         type: action === "approved" ? "quote_approved" : "quote_rejected",
         title: action === "approved" ? "Offerte goedgekeurd" : "Offerte afgewezen",
         body: `Totaal: €${quote.total_cost.toLocaleString("nl-BE", { minimumFractionDigits: 2 })}`,
+        link: `/dossiers/${propertyId}`,
         metadata: { job_id: jobId, quote_id: quote.id },
       });
 

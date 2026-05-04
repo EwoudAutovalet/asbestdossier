@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase";
-import { Building2, LayoutDashboard, FolderOpen, Users, LogOut, BarChart3, Menu, X } from "lucide-react";
+import { Building2, LayoutDashboard, FolderOpen, Users, LogOut, BarChart3, Menu, X, CalendarDays, UserCheck, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import type { Profile } from "@/lib/types";
+import { USER_ROLE_LABELS } from "@/lib/types";
 
 interface HeaderProps {
   profile: Profile;
@@ -30,8 +31,17 @@ export function Header({ profile }: HeaderProps) {
   const navItems = [
     { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/dossiers", label: "Dossiers", icon: FolderOpen },
+    { href: "/planning", label: "Planning", icon: CalendarDays },
+    { href: "/markt", label: "Marktplaats", icon: Store },
     ...(profile.role === "owner"
       ? [
+          { href: "/analytics", label: "Analytics", icon: BarChart3 },
+          { href: "/specialisten", label: "Specialisten", icon: Users },
+        ]
+      : []),
+    ...(profile.role === "broker"
+      ? [
+          { href: "/eigenaars", label: "Eigenaars", icon: UserCheck },
           { href: "/analytics", label: "Analytics", icon: BarChart3 },
           { href: "/specialisten", label: "Specialisten", icon: Users },
         ]
@@ -87,7 +97,7 @@ export function Header({ profile }: HeaderProps) {
         <div className="flex items-center gap-2 md:gap-3">
           <NotificationBell userId={profile.id} />
           <span className="hidden md:inline text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {profile.role === "owner" ? "Eigenaar" : "Specialist"}
+            {USER_ROLE_LABELS[profile.role]}
           </span>
           <Separator orientation="vertical" className="hidden md:block h-6" />
           <button

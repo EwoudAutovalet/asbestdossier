@@ -1,15 +1,12 @@
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { redirect } from "next/navigation";
-import { DossiersContent } from "./dossiers-content";
+import { NewRequestForm } from "./new-request-form";
 import type { Profile, Property } from "@/lib/types";
 
-export default async function DossiersPage() {
+export default async function NewMarketRequestPage() {
   const supabase = await createServerSupabaseClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
   const { data: profile } = await supabase
@@ -22,48 +19,32 @@ export default async function DossiersPage() {
 
   const typedProfile = profile as Profile;
 
-  let properties: Property[] = [];
-  let linkedOwners: Profile[] = [];
+  if (typedProfile.role === "specialist") redirect("/markt");
 
+  let properties: Property[] = [];
   if (typedProfile.role === "owner") {
     const { data } = await supabase
       .from("properties")
       .select("*")
       .eq("owner_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("address");
     properties = (data || []) as Property[];
   } else if (typedProfile.role === "broker") {
-    const { data: boData } = await supabase
+    const { data: bo } = await supabase
       .from("broker_owners")
-      .select("owner_id, owner:profiles!broker_owners_owner_id_fkey(*)")
+      .select("owner_id")
       .eq("broker_id", user.id)
       .eq("status", "active");
-
-    const ownerIds = (boData || []).map((bo) => bo.owner_id);
-    linkedOwners = (boData || []).map((bo) => bo.owner as unknown as Profile);
-
+    const ownerIds = (bo || []).map((b) => b.owner_id);
     if (ownerIds.length > 0) {
       const { data } = await supabase
         .from("properties")
         .select("*")
         .in("owner_id", ownerIds)
-        .order("created_at", { ascending: false });
+        .order("address");
       properties = (data || []) as Property[];
     }
-  } else {
-    const { data } = await supabase
-      .from("properties")
-      .select("*, jobs!inner(*)")
-      .eq("jobs.specialist_id", user.id)
-      .order("created_at", { ascending: false });
-    properties = (data || []) as Property[];
   }
 
-  return (
-    <DossiersContent
-      profile={typedProfile}
-      properties={properties}
-      linkedOwners={linkedOwners}
-    />
-  );
+  return <NewRequestForm profile={typedProfile} properties={properties} />;
 }

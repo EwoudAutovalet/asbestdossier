@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { Bell, Check, CheckCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,10 @@ const TYPE_ICONS: Record<string, string> = {
   specialist_assigned: "👤",
   inspection_completed: "🔍",
   removal_registered: "🗑️",
+  marketplace_new_request: "🏪",
+  marketplace_bid_received: "💰",
+  marketplace_bid_accepted: "🎉",
+  marketplace_bid_rejected: "🚫",
 };
 
 function timeAgo(dateStr: string) {
@@ -38,6 +43,7 @@ function timeAgo(dateStr: string) {
 
 export function NotificationBell({ userId }: NotificationBellProps) {
   const supabase = createClient();
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -149,6 +155,10 @@ export function NotificationBell({ userId }: NotificationBellProps) {
                   }`}
                   onClick={() => {
                     if (!n.read) markAsRead(n.id);
+                    if (n.link) {
+                      setOpen(false);
+                      router.push(n.link);
+                    }
                   }}
                 >
                   <span className="text-base shrink-0 mt-0.5">
